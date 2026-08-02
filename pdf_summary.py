@@ -84,10 +84,21 @@ def ask_llm(numbered_text, was_truncated=False):
 
 Rules:
 1. Write a short Overview (2-3 sentences) covering the main topic.
-2. List 3-5 Key Points. Each Key Point must end with a [Page X] citation.
+2. List 3-5 Key Points using bullet points (start each with "- "). Every bullet must end with the page citation in brackets, like this: [Page X].
 3. Write a Limitations section noting what the summary may miss.
 4. Format your output with these exact headings: ## Overview, ## Key Points, ## Limitations
 5. Do NOT add information beyond what is in the text.
+
+Example format:
+## Overview
+Brief summary here.
+
+## Key Points
+- First key point with supporting detail [Page 1].
+- Second key point with supporting detail [Page 2].
+
+## Limitations
+- Limitation noted here.
 """
 
     user_prompt = f"""Here is the document text:
@@ -105,15 +116,30 @@ Please provide the structured summary."""
             "document was not analyzed.]"
         )
 
-    response = client.chat.completions.create(
-        model="google/gemma-4-26b-a4b-it:free",
-        messages=[
-            {"role": "system", "content": system_prompt},
-            {"role": "user", "content": user_prompt},
-        ],
-    )
+    try:
+        response = client.chat.completions.create(
+            model="google/gemma-4-26b-a4b-it:free",
+            messages=[
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": user_prompt},
+            ],
+        )
 
-    return response.choices[0].message.content
+        if not response.choices:
+            return (
+                "ERROR: The API returned an empty response. "
+                "This may be a temporary server issue. Please try again."
+            )
+
+        return response.choices[0].message.content
+
+    except Exception as e:
+        print(f"API call failed: {e}")
+        return (
+            f"ERROR: The API call failed — {e}\n\n"
+            "Check that your OPENROUTER_API_KEY is valid in .env "
+            "and that you have an internet connection."
+        )
 
 
 def main():
