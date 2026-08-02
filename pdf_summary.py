@@ -1,0 +1,126 @@
+# ============================================================
+# pdf_summary.py - PDF Summary Tool with Page Citations
+# ============================================================
+# Reads a PDF file, extracts text, and sends it to an LLM
+# to produce a structured summary with [Page X] citations.
+# ============================================================
+
+import os
+import sys
+from openai import OpenAI
+from dotenv import load_dotenv
+
+load_dotenv()
+
+
+def extract_text_from_pdf(pdf_path):
+    """
+    Extract text from a PDF file, page by page.
+    Returns: list of dicts with 'page_number' and 'text' keys.
+    """
+    try:
+        import pdfplumber
+    except ImportError:
+        raise SystemExit(
+            "pdfplumber is not installed. Run: pip install pdfplumber"
+        )
+
+    pages = []
+    try:
+        with pdfplumber.open(pdf_path) as pdf:
+            total = len(pdf.pages)
+            for i, page in enumerate(pdf.pages, 1):
+                text = page.extract_text()
+                if text:
+                    pages.append({"page_number": i, "text": text.strip()})
+                print(f"Extracting page {i}/{total}...")
+    except Exception as e:
+        raise SystemExit(f"Failed to read PDF: {e}")
+
+    return pages
+
+
+def build_numbered_text(pages):
+    """
+    Combine extracted pages into a single numbered text for the LLM prompt.
+    """
+    blocks = []
+    for page in pages:
+        blocks.append(f"[Page {page['page_number']}]\n{page['text']}")
+    return "\n\n".join(blocks)
+
+
+def ask_llm(numbered_text):
+    """
+    Send the extracted text to the LLM and return the structured summary.
+    """
+    api_key = os.getenv("OPENROUTER_API_KEY")
+    if not api_key:
+        raise SystemExit("OPENROUTER_API_KEY is missing. Add it to .env and try again.")
+
+    client = OpenAI(
+        base_url="https://openrouter.ai/api/v1",
+        api_key=api_key,
+    )
+
+    system_prompt = """You are a precise research assistant. Summarize the provided document.
+
+Rules:
+1. Write a short Overview (2-3 sentences) covering the main topic.
+2. List 3-5 Key Points. Each Key Point must end with a [Page X] citation.
+3. Write a Limitations section noting what the summary may miss.
+4. Format your output with these exact headings: ## Overview, ## Key Points, ## Limitations
+5. Do NOT add information beyond what is in the text.
+"""
+
+    user_prompt = f"""Here is the document text:
+
+{numbered_text}
+
+Please provide the structured summary."""
+
+    response = client.chat.completions.create(
+        model="google/gemma-4-26b-a4b-it:free",
+        messages=[
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": user_prompt},
+        ],
+    )
+
+    return response.choices[0].message.content
+
+
+def main():
+    if len(sys.argv) < 2:
+        raise SystemExit("Usage: python3 pdf_summary.py <path-to-pdf>")
+
+    pdf_path = sys.argv[1]
+
+    if not os.path.isfile(pdf_path):
+        raise SystemExit(f"File not found: {pdf_path}")
+
+    # Step 1: Extract text from PDF
+    pages = extract_text_from_pdf(pdf_path)
+
+    if not pages:
+        raise SystemExit(
+            "No extractable text found in this PDF. "
+            "It may be a scanned document or contain only images. "
+            "Try a PDF with selectable text."
+        )
+
+    print(f"\nExtracted text from {len(pages)} page(s).\n")
+
+    # Step 2: Build the numbered text
+    numbered_text = build_numbered_text(pages)
+
+    # Step 3: Call the LLM
+    print("Generating summary...\n")
+    summary = ask_llm(numbered_text)
+
+    # Step 4: Print the result
+    print(summary)
+
+
+if __name__ == "__main__":
+    main()
