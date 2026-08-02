@@ -40,17 +40,34 @@ def extract_text_from_pdf(pdf_path):
     return pages
 
 
+MAX_CHARS = 100_000
+
+
 def build_numbered_text(pages):
     """
     Combine extracted pages into a single numbered text for the LLM prompt.
+    Truncates and warns if the total exceeds MAX_CHARS characters.
+    Returns: (numbered_text, was_truncated)
     """
     blocks = []
+    total_chars = 0
+    truncated = False
+
     for page in pages:
-        blocks.append(f"[Page {page['page_number']}]\n{page['text']}")
-    return "\n\n".join(blocks)
+        page_block = f"[Page {page['page_number']}]\n{page['text']}"
+        # +2 for the "\n\n" separator that will be added
+        if total_chars + len(page_block) > MAX_CHARS:
+            truncated = True
+            break
+        blocks.append(page_block)
+        total_chars += len(page_block) + 2
+
+    if blocks:
+        return "\n\n".join(blocks), truncated
+    return "", False
 
 
-def ask_llm(numbered_text):
+def ask_llm(numbered_text, was_truncated=False):
     """
     Send the extracted text to the LLM and return the structured summary.
     """
@@ -78,6 +95,15 @@ Rules:
 {numbered_text}
 
 Please provide the structured summary."""
+
+    if was_truncated:
+        user_prompt += (
+            "\n\n[WARNING: This document was too long and has been truncated at "
+            f"approximately {MAX_CHARS:,} characters. Only the beginning of the "
+            "document is shown above. In your Limitations section, mention that "
+            "your summary only covers the early pages and the rest of the "
+            "document was not analyzed.]"
+        )
 
     response = client.chat.completions.create(
         model="google/gemma-4-26b-a4b-it:free",
@@ -111,12 +137,15 @@ def main():
 
     print(f"\nExtracted text from {len(pages)} page(s).\n")
 
-    # Step 2: Build the numbered text
-    numbered_text = build_numbered_text(pages)
+    # Step 2: Build the numbered text (with truncation safeguard)
+    numbered_text, was_truncated = build_numbered_text(pages)
+    if was_truncated:
+        print(f"Warning: Text exceeds {MAX_CHARS:,} characters. "
+              "Only the beginning of the document will be summarized.\n")
 
     # Step 3: Call the LLM
     print("Generating summary...\n")
-    summary = ask_llm(numbered_text)
+    summary = ask_llm(numbered_text, was_truncated)
 
     # Step 4: Print the result
     print(summary)
